@@ -3,6 +3,7 @@
 #include <sys/resource.h>
 
 #include <ranges>
+#include <unordered_map>
 
 #include "helpers/math/Direction.hpp"
 #include "managers/XWaylandManager.hpp"
@@ -156,6 +157,8 @@ class CCompositor {
     void                                checkMonitorOverlaps();
     void                                enterUnsafeState();
     void                                leaveUnsafeState();
+    double                              preferredScaleForSurfaceOnMonitor(PHLMONITOR pMonitor);
+    void                                refreshSurfaceScalesForMonitor(PHLMONITOR pMonitor, bool force = false);
     void                                setPreferredScaleForSurface(SP<CWLSurfaceResource> pSurface, double scale);
     void                                setPreferredTransformForSurface(SP<CWLSurfaceResource> pSurface, wl_output_transform transform);
     void                                updateSuspendedStates();
@@ -188,6 +191,8 @@ class CCompositor {
     wl_event_source*               m_critSigSource  = nullptr;
     rlimit                         m_originalNofile = {};
     Hyprutils::OS::CFileDescriptor m_watchdogWriteFd;
+
+    std::unordered_map<MONITORID, double> m_lastPreferredSurfaceScaleByMonitor;
 
     std::vector<PHLWORKSPACEREF>   m_workspaces;
 };

@@ -26,6 +26,7 @@
 #include <bit>
 #include <ctime>
 #include <random>
+#include <cmath>
 #include <print>
 #include <cstring>
 #include <filesystem>
@@ -2885,24 +2886,100 @@ void CCompositor::leaveUnsafeState() {
     }
 }
 
-void CCompositor::setPreferredScaleForSurface(SP<CWLSurfaceResource> pSurface, double scale) {
-    PROTO::fractional->sendScale(pSurface, scale);
-    pSurface->sendPreferredScale(std::ceil(scale));
+static constexpr double PREFERRED_SCALE_EPSILON = 0.001;
 
+double CCompositor::preferredScaleForSurfaceOnMonitor(PHLMONITOR pMonitor) {
+    if (!pMonitor)
+        return 1.0;
+
+    static auto PZOOMPROJECTION      = CConfigValue<Hyprlang::INT>("debug:zoom_projection");
+    static auto PZOOMSURFACESCALE    = CConfigValue<Hyprlang::INT>("debug:zoom_surface_scale");
+    static auto PZOOMSURFACESCALEMAX = CConfigValue<Hyprlang::FLOAT>("debug:zoom_surface_scale_max");
+
+    const double MONITOR_SCALE = pMonitor->m_scale;
+    const double ACTIVE_ZOOM   = std::max(1.0, sc<double>(pMonitor->m_cursorZoom->goal()));
+
+    if (!*PZOOMPROJECTION || !*PZOOMSURFACESCALE || pMonitor->isMirror() || pMonitor != getMonitorFromCursor() || ACTIVE_ZOOM <= 1.0)
+        return MONITOR_SCALE;
+
+    return std::clamp(MONITOR_SCALE * ACTIVE_ZOOM, MONITOR_SCALE, std::max(MONITOR_SCALE, sc<double>(*PZOOMSURFACESCALEMAX)));
+}
+
+void CCompositor::refreshSurfaceScalesForMonitor(PHLMONITOR pMonitor, bool force) {
+    if (!pMonitor || m_unsafeState)
+        return;
+
+    const double REQUESTED_SCALE = preferredScaleForSurfaceOnMonitor(pMonitor);
+    auto&        lastScale       = m_lastPreferredSurfaceScaleByMonitor[pMonitor->m_id];
+
+    if (!force && std::abs(lastScale - REQUESTED_SCALE) < PREFERRED_SCALE_EPSILON)
+        return;
+
+    lastScale = REQUESTED_SCALE;
+
+    const auto setTreeScale = [REQUESTED_SCALE](SP<CWLSurfaceResource> surface) {
+        if (surface)
+            surface->breadthfirst([REQUESTED_SCALE](SP<CWLSurfaceResource> s, const Vector2D& offset, void* data) { g_pCompositor->setPreferredScaleForSurface(s, REQUESTED_SCALE); },
+                                  nullptr);
+    };
+
+    const auto updatePopup = [&setTreeScale](SP<Desktop::View::CPopup> popup, void* data) {
+        if (popup && popup->aliveAndVisible() && popup->wlSurface())
+            setTreeScale(popup->wlSurface()->resource());
+    };
+
+    for (auto const& w : m_windows) {
+        if (!w || !w->m_isMapped || w->isHidden() || !w->m_workspace || !w->m_workspace->isVisible() || w->m_monitor.lock() != pMonitor)
+            continue;
+
+        w->updateSurfaceScaleTransformDetails();
+
+        if (w->m_popupHead)
+            w->m_popupHead->breadthfirst(updatePopup, nullptr);
+    }
+
+    for (auto const& layerSurfaces : pMonitor->m_layerSurfaceLayers) {
+        for (auto const& ls : layerSurfaces) {
+            if (!ls || !ls->aliveAndVisible() || !ls->wlSurface())
+                continue;
+
+            setTreeScale(ls->wlSurface()->resource());
+
+            if (ls->m_popupHead)
+                ls->m_popupHead->breadthfirst(updatePopup, nullptr);
+        }
+    }
+
+    if (g_pHyprRenderer)
+        g_pHyprRenderer->damageMonitor(pMonitor);
+}
+
+void CCompositor::setPreferredScaleForSurface(SP<CWLSurfaceResource> pSurface, double scale) {
     const auto PSURFACE = Desktop::View::CWLSurface::fromResource(pSurface);
+    const auto SCALEINT = sc<int32_t>(std::ceil(scale));
+
+    if (PSURFACE && std::abs(PSURFACE->m_lastScaleFloat - scale) < PREFERRED_SCALE_EPSILON && PSURFACE->m_lastScaleInt == SCALEINT)
+        return;
+
+    PROTO::fractional->sendScale(pSurface, scale);
+    pSurface->sendPreferredScale(SCALEINT);
+
     if (!PSURFACE) {
         Log::logger->log(Log::WARN, "Orphaned CWLSurfaceResource {:x} in setPreferredScaleForSurface", rc<uintptr_t>(pSurface.get()));
         return;
     }
 
     PSURFACE->m_lastScaleFloat = scale;
-    PSURFACE->m_lastScaleInt   = sc<int32_t>(std::ceil(scale));
+    PSURFACE->m_lastScaleInt   = SCALEINT;
 }
 
 void CCompositor::setPreferredTransformForSurface(SP<CWLSurfaceResource> pSurface, wl_output_transform transform) {
+    const auto PSURFACE = Desktop::View::CWLSurface::fromResource(pSurface);
+    if (PSURFACE && PSURFACE->m_lastTransform == transform)
+        return;
+
     pSurface->sendPreferredTransform(transform);
 
-    const auto PSURFACE = Desktop::View::CWLSurface::fromResource(pSurface);
     if (!PSURFACE) {
         Log::logger->log(Log::WARN, "Orphaned CWLSurfaceResource {:x} in setPreferredTransformForSurface", rc<uintptr_t>(pSurface.get()));
         return;

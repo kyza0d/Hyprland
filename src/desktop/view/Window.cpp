@@ -438,7 +438,7 @@ void CWindow::updateToplevel() {
     updateSurfaceScaleTransformDetails();
 }
 
-void CWindow::updateSurfaceScaleTransformDetails(bool force) {
+void CWindow::updateSurfaceScaleTransformDetails() {
     if (!m_isMapped || m_hidden || g_pCompositor->m_unsafeState)
         return;
 
@@ -451,7 +451,7 @@ void CWindow::updateSurfaceScaleTransformDetails(bool force) {
     if (!PNEWMONITOR)
         return;
 
-    if (PNEWMONITOR != PLASTMONITOR || force) {
+    if (PNEWMONITOR != PLASTMONITOR) {
         if (PLASTMONITOR && PLASTMONITOR->m_enabled && PNEWMONITOR != PLASTMONITOR)
             m_wlSurface->resource()->breadthfirst([PLASTMONITOR](SP<CWLSurfaceResource> s, const Vector2D& offset, void* d) { s->leave(PLASTMONITOR->m_self.lock()); }, nullptr);
 
@@ -460,14 +460,11 @@ void CWindow::updateSurfaceScaleTransformDetails(bool force) {
 
     const auto PMONITOR = m_monitor.lock();
 
-    m_wlSurface->resource()->breadthfirst(
-        [PMONITOR](SP<CWLSurfaceResource> s, const Vector2D& offset, void* d) {
-            const auto PSURFACE = CWLSurface::fromResource(s);
-            if (PSURFACE && PSURFACE->m_lastScaleFloat == PMONITOR->m_scale)
-                return;
+    const auto REQUESTED_SCALE = g_pCompositor->preferredScaleForSurfaceOnMonitor(PMONITOR);
 
-            PROTO::fractional->sendScale(s, PMONITOR->m_scale);
-            g_pCompositor->setPreferredScaleForSurface(s, PMONITOR->m_scale);
+    m_wlSurface->resource()->breadthfirst(
+        [PMONITOR, REQUESTED_SCALE](SP<CWLSurfaceResource> s, const Vector2D& offset, void* d) {
+            g_pCompositor->setPreferredScaleForSurface(s, REQUESTED_SCALE);
             g_pCompositor->setPreferredTransformForSurface(s, PMONITOR->m_transform);
         },
         nullptr);
@@ -664,7 +661,7 @@ void CWindow::onMap() {
     m_reportedSize = m_pendingReportedSize;
     m_animatingIn  = true;
 
-    updateSurfaceScaleTransformDetails(true);
+    updateSurfaceScaleTransformDetails();
 
     if (m_isX11)
         return;
@@ -2106,7 +2103,7 @@ void CWindow::mapWindow() {
     if (PWORKSPACE->m_hasFullscreenWindow && !isFullscreen() && !m_isFloating)
         m_alpha->setValueAndWarp(0.f);
 
-    g_pCompositor->setPreferredScaleForSurface(wlSurface()->resource(), PMONITOR->m_scale);
+    g_pCompositor->setPreferredScaleForSurface(wlSurface()->resource(), g_pCompositor->preferredScaleForSurfaceOnMonitor(PMONITOR));
     g_pCompositor->setPreferredTransformForSurface(wlSurface()->resource(), PMONITOR->m_transform);
 
     if (g_pSeatManager->m_mouse.expired() || !g_pInputManager->isConstrained())

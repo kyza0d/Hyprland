@@ -1771,6 +1771,24 @@ inline static const std::vector<SConfigOptionDescription> CONFIG_OPTIONS = {
         .data        = SConfigOptionDescription::SBoolData{false},
     },
     SConfigOptionDescription{
+        .value       = "debug:zoom_projection",
+        .description = "render cursor zoom through a scene-scoped camera modifier instead of final framebuffer scaling.",
+        .type        = CONFIG_OPTION_BOOL,
+        .data        = SConfigOptionDescription::SBoolData{false},
+    },
+    SConfigOptionDescription{
+        .value       = "debug:zoom_surface_scale",
+        .description = "request zoom-derived preferred surface scales while the debug zoom projection path is active.",
+        .type        = CONFIG_OPTION_BOOL,
+        .data        = SConfigOptionDescription::SBoolData{false},
+    },
+    SConfigOptionDescription{
+        .value       = "debug:zoom_surface_scale_max",
+        .description = "maximum preferred surface scale requested by the debug zoom surface scale prototype.",
+        .type        = CONFIG_OPTION_FLOAT,
+        .data        = SConfigOptionDescription::SFloatData{3.0, 1.0, 10.0},
+    },
+    SConfigOptionDescription{
         .value       = "debug:disable_logs",
         .description = "disable logging to a file",
         .type        = CONFIG_OPTION_BOOL,

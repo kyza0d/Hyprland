@@ -277,7 +277,7 @@ namespace Desktop::View {
         pid_t                      getPID();
         IHyprWindowDecoration*     getDecorationByType(eDecorationType);
         void                       updateToplevel();
-        void                       updateSurfaceScaleTransformDetails(bool force = false);
+        void                       updateSurfaceScaleTransformDetails();
         void                       moveToWorkspace(PHLWORKSPACE);
         PHLWINDOW                  x11TransientFor();
         void                       onUnmap();

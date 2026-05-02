@@ -1,71 +1,84 @@
 #include "MonitorZoomController.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <hyprlang.hpp>
 #include "../config/ConfigValue.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../render/OpenGL.hpp"
-#include "desktop/DesktopTypes.hpp"
+#include "Monitor.hpp"
 #include "render/Renderer.hpp"
 
-void CMonitorZoomController::zoomWithDetachedCamera(CBox& result, const SCurrentRenderData& m_renderData) {
-    const auto m      = m_renderData.pMonitor;
-    auto       monbox = CBox(0, 0, m->m_size.x, m->m_size.y);
-    const auto ZOOM   = m_renderData.mouseZoomFactor;
-    const auto MOUSE  = g_pInputManager->getMouseCoordsInternal() - m->m_position;
+static constexpr float ZOOM_LEVEL_EPSILON = 0.001F;
 
-    if (m_lastZoomLevel != ZOOM) {
+static CBox            clampedZoomSource(PHLMONITOR pMonitor, const Vector2D& anchorMonitorLocal, float zoom) {
+    const Vector2D SIZE = pMonitor->m_size / zoom;
+    return {std::clamp(anchorMonitorLocal.x - SIZE.x / 2.0, 0.0, pMonitor->m_size.x - SIZE.x), std::clamp(anchorMonitorLocal.y - SIZE.y / 2.0, 0.0, pMonitor->m_size.y - SIZE.y),
+            SIZE.x, SIZE.y};
+}
+
+static void clampZoomSourceToMonitor(CBox& source, PHLMONITOR pMonitor) {
+    source.w = std::min(source.w, pMonitor->m_size.x);
+    source.h = std::min(source.h, pMonitor->m_size.y);
+    source.x = std::clamp(source.x, 0.0, pMonitor->m_size.x - source.w);
+    source.y = std::clamp(source.y, 0.0, pMonitor->m_size.y - source.h);
+}
+
+CBox CMonitorZoomController::zoomSourceWithDetachedCamera(PHLMONITOR pMonitor, float zoom) {
+    const auto MOUSE = g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
+
+    if (m_resetCameraState || std::abs(m_lastZoomLevel - zoom) > ZOOM_LEVEL_EPSILON) {
         if (m_resetCameraState) {
             m_resetCameraState = false;
-            m_camera           = CBox(0, 0, m->m_size.x, m->m_size.y);
-            m_lastZoomLevel    = 1.0f;
+            m_camera           = clampedZoomSource(pMonitor, MOUSE, zoom);
+            m_lastZoomLevel    = zoom;
+            return m_camera;
         }
-        const CBox old = m_camera;
 
-        // mouse normalized inside screen (0..1)
-        const float mx = MOUSE.x / m->m_size.x;
-        const float my = MOUSE.y / m->m_size.y;
-        // world-space point under the cursor before zoom
-        const float mouseWorldX = old.x + (mx * old.w);
-        const float mouseWorldY = old.y + (my * old.h);
+        const auto CENTER = m_camera.pos() + m_camera.size() / 2.0;
+        const auto SIZE   = pMonitor->m_size / zoom;
+        m_camera          = CBox{CENTER - SIZE / 2.0, SIZE};
+        clampZoomSourceToMonitor(m_camera, pMonitor);
 
-        const auto  CAMERAW = monbox.w / ZOOM;
-        const auto  CAMERAH = monbox.h / ZOOM;
-
-        // compute new top-left so the same world point stays under the cursor
-        const float newX = mouseWorldX - (mx * CAMERAW);
-        const float newY = mouseWorldY - (my * CAMERAH);
-
-        m_camera = CBox(newX, newY, CAMERAW, CAMERAH);
-        // Detect if this zoom would've caused jerk to keep mouse in view and disable edges if so
-        if (!m_camera.copy().scaleFromCenter(.9).containsPoint(MOUSE))
-            m_padCamEdges = false;
-        m_lastZoomLevel = ZOOM;
+        // Resizing the viewport should not re-anchor it to the cursor. If the resize leaves the cursor outside
+        // the boundary, push the viewport only as much as needed below.
+        m_lastZoomLevel = zoom;
     }
 
-    // Keep mouse inside cameraview
-    auto smallerbox = m_camera;
-    // Prevent zoom step from causing us to jerk to keep mouse in padded camera view,
-    // but let us switch to the padded camera once the mouse moves into the safe area
-    if (!m_padCamEdges)
-        if (smallerbox.copy().scaleFromCenter(.9).containsPoint(MOUSE))
-            m_padCamEdges = true;
-    if (m_padCamEdges)
-        smallerbox.scaleFromCenter(.9);
-    if (!smallerbox.containsPoint(MOUSE)) {
-        if (MOUSE.x < smallerbox.x)
-            m_camera.x -= smallerbox.x - MOUSE.x;
-        if (MOUSE.y < smallerbox.y)
-            m_camera.y -= smallerbox.y - MOUSE.y;
-        if (MOUSE.y > smallerbox.y + smallerbox.h)
-            m_camera.y += MOUSE.y - (smallerbox.y + smallerbox.h);
-        if (MOUSE.x > smallerbox.x + smallerbox.w)
-            m_camera.x += MOUSE.x - (smallerbox.x + smallerbox.w);
+    // Dead-zone camera: the zoom source is fixed while the cursor moves inside it, and is pushed only at its edges.
+    if (!m_camera.containsPoint(MOUSE)) {
+        if (MOUSE.x < m_camera.x)
+            m_camera.x = MOUSE.x;
+        if (MOUSE.y < m_camera.y)
+            m_camera.y = MOUSE.y;
+        if (MOUSE.y > m_camera.y + m_camera.h)
+            m_camera.y = MOUSE.y - m_camera.h;
+        if (MOUSE.x > m_camera.x + m_camera.w)
+            m_camera.x = MOUSE.x - m_camera.w;
     }
 
-    auto z = ZOOM * m->m_scale;
-    monbox.scale(z).translate(-m_camera.pos() * z);
+    clampZoomSourceToMonitor(m_camera, pMonitor);
 
-    result = monbox;
+    return m_camera;
+}
+
+CBox CMonitorZoomController::zoomSource(PHLMONITOR pMonitor, float zoom, bool useMouse, bool forceDetached) {
+    static auto PZOOMDETACHEDCAMERA = CConfigValue<Hyprlang::INT>("cursor:zoom_detached_camera");
+
+    if (!pMonitor || zoom <= 1.0F) {
+        m_resetCameraState = true;
+        return {};
+    }
+
+    const auto INITANIM = pMonitor->m_zoomAnimProgress->value() != 1.0;
+
+    if ((*PZOOMDETACHEDCAMERA || forceDetached) && useMouse && !INITANIM)
+        return zoomSourceWithDetachedCamera(pMonitor, zoom);
+
+    m_resetCameraState = true;
+
+    const auto ANCHOR = useMouse ? g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position : pMonitor->m_size / 2.0;
+    return clampedZoomSource(pMonitor, ANCHOR, zoom);
 }
 
 void CMonitorZoomController::applyZoomTransform(CBox& monbox, const SCurrentRenderData& m_renderData) {
@@ -76,13 +89,18 @@ void CMonitorZoomController::applyZoomTransform(CBox& monbox, const SCurrentRend
     if (ZOOM == 1.0f)
         return;
 
-    const auto m        = m_renderData.pMonitor;
+    const auto m        = m_renderData.pMonitor.lock();
+    if (!m)
+        return;
+
     const auto ORIGINAL = monbox;
     const auto INITANIM = m->m_zoomAnimProgress->value() != 1.0;
 
-    if (*PZOOMDETACHEDCAMERA && !INITANIM)
-        zoomWithDetachedCamera(monbox, m_renderData);
-    else {
+    if (*PZOOMDETACHEDCAMERA && !INITANIM) {
+        const auto SOURCE = zoomSourceWithDetachedCamera(m, ZOOM);
+        const auto SCALE  = ZOOM * m->m_scale;
+        monbox            = CBox(0, 0, m->m_size.x, m->m_size.y).scale(SCALE).translate(-SOURCE.pos() * SCALE);
+    } else {
         const auto ZOOMCENTER = m_renderData.mouseZoomUseMouse ? (g_pInputManager->getMouseCoordsInternal() - m->m_position) * m->m_scale : m->m_transformedSize / 2.f;
 
         monbox.translate(-ZOOMCENTER).scale(ZOOM).translate(*PZOOMRIGID ? m->m_transformedSize / 2.0 : ZOOMCENTER);

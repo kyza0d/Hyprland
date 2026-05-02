@@ -637,6 +637,10 @@ void CPointerManager::renderSoftwareCursorsFor(PHLMONITOR pMonitor, const Time::
         return;
 
     box.scale(pMonitor->m_scale);
+    if (g_pHyprOpenGL->m_renderData.zoomProjection) {
+        box.translate(-g_pHyprOpenGL->m_renderData.zoomProjectionSourceMonitorLocal.pos() * pMonitor->m_scale);
+        box.scale(g_pHyprOpenGL->m_renderData.mouseZoomFactor);
+    }
     box.x = std::round(box.x);
     box.y = std::round(box.y);
 

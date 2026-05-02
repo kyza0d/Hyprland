@@ -419,12 +419,24 @@ Vector2D CPopup::size() const {
 }
 
 void CPopup::sendScale() {
+    if (!m_wlSurface)
+        return;
+
+    double scale = 1.0;
+
     if (!m_windowOwner.expired())
-        g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), m_windowOwner->wlSurface()->m_lastScaleFloat);
+        scale = m_windowOwner->wlSurface()->m_lastScaleFloat;
     else if (!m_layerOwner.expired())
-        g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), m_layerOwner->wlSurface()->m_lastScaleFloat);
+        scale = m_layerOwner->wlSurface()->m_lastScaleFloat;
     else
         UNREACHABLE();
+
+    if (scale <= 0.0) {
+        if (const auto PMONITOR = getMonitor())
+            scale = g_pCompositor->preferredScaleForSurfaceOnMonitor(PMONITOR);
+    }
+
+    m_wlSurface->resource()->breadthfirst([scale](SP<CWLSurfaceResource> s, const Vector2D& offset, void* data) { g_pCompositor->setPreferredScaleForSurface(s, scale); }, nullptr);
 }
 
 void CPopup::bfHelper(std::vector<SP<CPopup>> const& nodes, std::function<void(SP<CPopup>, void*)> fn, void* data) {

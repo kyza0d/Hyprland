@@ -917,6 +917,11 @@ void CHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
     // g_pHyprOpenGL->setMatrixScaleTranslate(translate, scale);
 
     SRenderModifData RENDERMODIFDATA;
+    if (g_pHyprOpenGL->m_renderData.zoomProjection) {
+        RENDERMODIFDATA.modifs.emplace_back(
+            std::make_pair<>(SRenderModifData::eRenderModifType::RMOD_TYPE_TRANSLATE, -g_pHyprOpenGL->m_renderData.zoomProjectionSourceMonitorLocal.pos() * pMonitor->m_scale));
+        RENDERMODIFDATA.modifs.emplace_back(std::make_pair<>(SRenderModifData::eRenderModifType::RMOD_TYPE_SCALE, g_pHyprOpenGL->m_renderData.mouseZoomFactor));
+    }
     if (translate != Vector2D{0, 0})
         RENDERMODIFDATA.modifs.emplace_back(std::make_pair<>(SRenderModifData::eRenderModifType::RMOD_TYPE_TRANSLATE, translate));
     if UNLIKELY (scale != 1.f)
@@ -1270,6 +1275,7 @@ void CHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
     static auto                                           PDAMAGEBLINK        = CConfigValue<Hyprlang::INT>("debug:damage_blink");
     static auto                                           PSOLDAMAGE          = CConfigValue<Hyprlang::INT>("debug:render_solitary_wo_damage");
     static auto                                           PVFR                = CConfigValue<Hyprlang::INT>("misc:vfr");
+    static auto                                           PZOOMPROJECTION     = CConfigValue<Hyprlang::INT>("debug:zoom_projection");
 
     static int                                            damageBlinkCleanup = 0; // because double-buffered
 
@@ -1377,6 +1383,17 @@ void CHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
         g_pHyprOpenGL->m_renderData.useNearestNeighbor = false;
     }
 
+    g_pHyprOpenGL->m_renderData.zoomProjection = false;
+    g_pHyprOpenGL->m_renderData.noSimplify     = false;
+    if (*PZOOMPROJECTION && g_pHyprOpenGL->m_renderData.mouseZoomFactor != 1.F && !pMonitor->isMirror()) {
+        // Projection is the camera path, so keep it on the loom source instead of the legacy cursor-anchored fallback.
+        constexpr bool FORCEDETACHED = true;
+        g_pHyprOpenGL->m_renderData.zoomProjectionSourceMonitorLocal =
+            pMonitor->m_zoomController.zoomSource(pMonitor, g_pHyprOpenGL->m_renderData.mouseZoomFactor, g_pHyprOpenGL->m_renderData.mouseZoomUseMouse, FORCEDETACHED);
+        g_pHyprOpenGL->m_renderData.zoomProjection = true;
+        g_pHyprOpenGL->m_renderData.noSimplify     = true;
+    }
+
     CRegion damage, finalDamage;
     if (!beginRender(pMonitor, damage, RENDER_MODE_NORMAL)) {
         Log::logger->log(Log::ERR, "renderer: couldn't beginRender()!");
@@ -1384,7 +1401,8 @@ void CHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
     }
 
     // if we have no tracking or full tracking, invalidate the entire monitor
-    if (*PDAMAGETRACKINGMODE == DAMAGE_TRACKING_NONE || *PDAMAGETRACKINGMODE == DAMAGE_TRACKING_MONITOR || pMonitor->m_forceFullFrames > 0 || damageBlinkCleanup > 0)
+    if (*PDAMAGETRACKINGMODE == DAMAGE_TRACKING_NONE || *PDAMAGETRACKINGMODE == DAMAGE_TRACKING_MONITOR || pMonitor->m_forceFullFrames > 0 || damageBlinkCleanup > 0 ||
+        g_pHyprOpenGL->m_renderData.zoomProjection)
         damage = {0, 0, sc<int>(pMonitor->m_transformedSize.x) * 10, sc<int>(pMonitor->m_transformedSize.y) * 10};
 
     finalDamage = damage;
@@ -2348,6 +2366,9 @@ void CHyprRenderer::endRender(const std::function<void()>& renderingDoneCallback
         g_pHyprOpenGL->m_renderData.pMonitor.reset();
         g_pHyprOpenGL->m_renderData.mouseZoomFactor   = 1.f;
         g_pHyprOpenGL->m_renderData.mouseZoomUseMouse = true;
+        g_pHyprOpenGL->m_renderData.zoomProjection    = false;
+        g_pHyprOpenGL->m_renderData.noSimplify        = false;
+        g_pHyprOpenGL->m_renderData.renderModif       = {};
     }
 
     if (m_renderMode == RENDER_MODE_FULL_FAKE)

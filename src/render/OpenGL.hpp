@@ -167,8 +167,10 @@ struct SCurrentRenderData {
     CRegion                finalDamage; // damage used for funal off -> main
 
     SRenderModifData       renderModif;
-    float                  mouseZoomFactor    = 1.f;
-    bool                   mouseZoomUseMouse  = true; // true by default
+    float                  mouseZoomFactor   = 1.f;
+    bool                   mouseZoomUseMouse = true; // true by default
+    bool                   zoomProjection    = false;
+    CBox                   zoomProjectionSourceMonitorLocal;
     bool                   useNearestNeighbor = false;
     bool                   blockScreenShader  = false;
     bool                   simplePass         = false;

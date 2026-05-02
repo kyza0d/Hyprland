@@ -224,7 +224,7 @@ void CLayerSurface::onMap() {
     g_pEventManager->postEvent(SHyprIPCEvent{.event = "openlayer", .data = m_namespace});
     Event::bus()->m_events.layer.opened.emit(m_self.lock());
 
-    g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), PMONITOR->m_scale);
+    g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), g_pCompositor->preferredScaleForSurfaceOnMonitor(PMONITOR));
     g_pCompositor->setPreferredTransformForSurface(m_wlSurface->resource(), PMONITOR->m_transform);
 }
 
@@ -419,7 +419,7 @@ void CLayerSurface::onCommit() {
 
     g_pHyprRenderer->damageSurface(m_wlSurface->resource(), m_position.x, m_position.y);
 
-    g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), PMONITOR->m_scale);
+    g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), g_pCompositor->preferredScaleForSurfaceOnMonitor(PMONITOR));
     g_pCompositor->setPreferredTransformForSurface(m_wlSurface->resource(), PMONITOR->m_transform);
 }
 

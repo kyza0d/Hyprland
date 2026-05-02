@@ -782,14 +782,18 @@ void CHyprOpenGLImpl::end() {
         m_renderData.damage = m_renderData.finalDamage;
         pushMonitorTransformEnabled(true);
 
-        CBox monbox = {0, 0, m_renderData.pMonitor->m_transformedSize.x, m_renderData.pMonitor->m_transformedSize.y};
+        CBox       monbox = {0, 0, m_renderData.pMonitor->m_transformedSize.x, m_renderData.pMonitor->m_transformedSize.y};
+
+        const auto SAVEDRENDERMODIF = m_renderData.renderModif;
+        m_renderData.renderModif    = {};
 
         if LIKELY (g_pHyprRenderer->m_renderMode == RENDER_MODE_NORMAL && m_renderData.mouseZoomFactor == 1.0f)
             m_renderData.pMonitor->m_zoomController.m_resetCameraState = true;
-        m_renderData.pMonitor->m_zoomController.applyZoomTransform(monbox, m_renderData);
+        if (!m_renderData.zoomProjection)
+            m_renderData.pMonitor->m_zoomController.applyZoomTransform(monbox, m_renderData);
 
         m_applyFinalShader = !m_renderData.blockScreenShader;
-        if UNLIKELY (m_renderData.mouseZoomFactor != 1.F && m_renderData.mouseZoomUseMouse && *PZOOMDISABLEAA)
+        if UNLIKELY (m_renderData.mouseZoomFactor != 1.F && m_renderData.mouseZoomUseMouse && !m_renderData.zoomProjection && *PZOOMDISABLEAA)
             m_renderData.useNearestNeighbor = true;
 
         // copy the damaged areas into the mirror buffer
@@ -807,6 +811,7 @@ void CHyprOpenGLImpl::end() {
 
         blend(true);
 
+        m_renderData.renderModif        = SAVEDRENDERMODIF;
         m_renderData.useNearestNeighbor = false;
         m_applyFinalShader              = false;
         popMonitorTransformEnabled();
@@ -826,6 +831,9 @@ void CHyprOpenGLImpl::end() {
     m_renderData.pMonitor.reset();
     m_renderData.mouseZoomFactor   = 1.f;
     m_renderData.mouseZoomUseMouse = true;
+    m_renderData.zoomProjection    = false;
+    m_renderData.noSimplify        = false;
+    m_renderData.renderModif       = {};
     m_renderData.blockScreenShader = false;
     m_renderData.currentFB         = nullptr;
     m_renderData.mainFB            = nullptr;

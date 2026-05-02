@@ -564,6 +564,9 @@ CConfigManager::CConfigManager() {
     registerConfigVar("debug:damage_blink", Hyprlang::INT{0});
     registerConfigVar("debug:pass", Hyprlang::INT{0});
     registerConfigVar("debug:gl_debugging", Hyprlang::INT{0});
+    registerConfigVar("debug:zoom_projection", Hyprlang::INT{0});
+    registerConfigVar("debug:zoom_surface_scale", Hyprlang::INT{0});
+    registerConfigVar("debug:zoom_surface_scale_max", Hyprlang::FLOAT{3.0});
     registerConfigVar("debug:disable_logs", Hyprlang::INT{1});
     registerConfigVar("debug:disable_time", Hyprlang::INT{1});
     registerConfigVar("debug:enable_stdout_logs", Hyprlang::INT{0});
@@ -1359,6 +1362,7 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
     static auto PZOOMFACTOR = CConfigValue<Hyprlang::FLOAT>("cursor:zoom_factor");
     for (auto const& m : g_pCompositor->m_monitors) {
         *(m->m_cursorZoom) = *PZOOMFACTOR;
+        g_pCompositor->refreshSurfaceScalesForMonitor(m, true);
         if (m->m_activeWorkspace)
             m->m_activeWorkspace->m_space->recalculate();
     }

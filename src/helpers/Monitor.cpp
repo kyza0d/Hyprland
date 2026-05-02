@@ -60,7 +60,19 @@ CMonitor::CMonitor(SP<Aquamarine::IOutput> output_) : m_state(this), m_output(ou
     m_specialFade->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
     static auto PZOOMFACTOR = CConfigValue<Hyprlang::FLOAT>("cursor:zoom_factor");
     g_pAnimationManager->createAnimation(*PZOOMFACTOR, m_cursorZoom, g_pConfigManager->getAnimationPropertyConfig("zoomFactor"), AVARDAMAGE_NONE);
-    m_cursorZoom->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
+    m_cursorZoom->setUpdateCallback([this](auto) {
+        static auto PZOOMPROJECTION   = CConfigValue<Hyprlang::INT>("debug:zoom_projection");
+        static auto PZOOMSURFACESCALE = CConfigValue<Hyprlang::INT>("debug:zoom_surface_scale");
+
+        const auto PMONITOR = m_self.lock();
+        if (!PMONITOR)
+            return;
+
+        g_pHyprRenderer->damageMonitor(PMONITOR);
+
+        if (*PZOOMPROJECTION && *PZOOMSURFACESCALE && g_pCompositor->getMonitorFromCursor() == PMONITOR)
+            g_pCompositor->refreshSurfaceScalesForMonitor(PMONITOR);
+    });
     g_pAnimationManager->createAnimation(0.F, m_zoomAnimProgress, g_pConfigManager->getAnimationPropertyConfig("monitorAdded"), AVARDAMAGE_NONE);
     m_zoomAnimProgress->setUpdateCallback([this](auto) { g_pHyprRenderer->damageMonitor(m_self.lock()); });
     g_pAnimationManager->createAnimation(0.F, m_backgroundOpacity, g_pConfigManager->getAnimationPropertyConfig("monitorAdded"), AVARDAMAGE_NONE);
