@@ -38,6 +38,8 @@
 #include <string>
 #include <string_view>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 
 #include <hyprutils/string/String.hpp>
 #include <hyprutils/string/ConstVarList.hpp>
@@ -55,6 +57,34 @@ using namespace Hyprutils::OS;
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <sys/consio.h>
 #endif
+
+static constexpr float CURSOR_ZOOM_MIN          = 1.F;
+static constexpr float CURSOR_ZOOM_MAX          = 100.F;
+static constexpr float CURSOR_ZOOM_SETTLE_EPS   = 0.0005F;
+static constexpr float CURSOR_ZOOM_VELOCITY_EPS = 0.002F;
+static constexpr float CURSOR_ZOOM_SMOOTH_TIME  = 0.12F;
+
+static float smoothCursorZoomStep(const float current, const float target, float& velocity, const float dt) {
+    const float OMEGA  = 2.F / CURSOR_ZOOM_SMOOTH_TIME;
+    const float X      = OMEGA * dt;
+    const float EXP    = 1.F / (1.F + X + 0.48F * X * X + 0.235F * X * X * X);
+    const float CHANGE = current - target;
+    const float TEMP   = (velocity + OMEGA * CHANGE) * dt;
+
+    velocity     = (velocity - OMEGA * TEMP) * EXP;
+    float output = target + (CHANGE + TEMP) * EXP;
+
+    if ((target - current > 0.F) == (output > target)) {
+        output   = target;
+        velocity = 0.F;
+    }
+
+    const float CLAMPED = std::clamp(output, CURSOR_ZOOM_MIN, CURSOR_ZOOM_MAX);
+    if (CLAMPED != output)
+        velocity = 0.F;
+
+    return CLAMPED;
+}
 
 static std::vector<std::pair<std::string, std::string>> getHyprlandLaunchEnv(PHLWORKSPACE pInitialWorkspace) {
     static auto PINITIALWSTRACKING = CConfigValue<Hyprlang::INT>("misc:initial_workspace_tracking");
@@ -115,6 +145,7 @@ CKeybindManager::CKeybindManager() {
     m_dispatchers["focusmonitor"]                   = focusMonitor;
     m_dispatchers["movecursortocorner"]             = moveCursorToCorner;
     m_dispatchers["movecursor"]                     = moveCursor;
+    m_dispatchers["zoom"]                           = cursorZoom;
     m_dispatchers["workspaceopt"]                   = workspaceOpt;
     m_dispatchers["exit"]                           = exitHyprland;
     m_dispatchers["movecurrentworkspacetomonitor"]  = moveCurrentWorkspaceToMonitor;
@@ -235,6 +266,97 @@ void CKeybindManager::removeKeybind(uint32_t mod, const SParsedKey& key) {
 
     m_activeKeybinds.clear();
     m_lastLongPressKeybind.reset();
+}
+
+bool CKeybindManager::shouldBypassScrollDelay(const uint32_t modmask, const std::string& keyName) {
+    static auto PDISABLEINHIBIT = CConfigValue<Hyprlang::INT>("binds:disable_keybind_grabbing");
+
+    if (keyName.empty())
+        return false;
+
+    for (auto const& k : m_keybinds) {
+        if (k->handler != "zoom" || k->key != keyName)
+            continue;
+
+        if (!k->dontInhibit && !*PDISABLEINHIBIT && PROTO::shortcutsInhibit->isInhibited())
+            continue;
+
+        if (!k->locked && g_pSessionLockManager->isSessionLocked())
+            continue;
+
+        if ((modmask != k->modmask && !k->ignoreMods) || (k->submap != m_currentSelectedSubmap && !k->submapUniversal) || k->shadowed)
+            continue;
+
+        return true;
+    }
+
+    return false;
+}
+
+void CKeybindManager::resetCursorZoomSmoothing() {
+    if (m_cursorZoomSmoothing.active) {
+        const float CURRENT = std::clamp(m_cursorZoomSmoothing.current, CURSOR_ZOOM_MIN, CURSOR_ZOOM_MAX);
+        for (auto const& m : g_pCompositor->m_monitors)
+            m->m_cursorZoom->setValueAndWarp(CURRENT);
+    }
+
+    m_cursorZoomSmoothing.active   = false;
+    m_cursorZoomSmoothing.velocity = 0.F;
+}
+
+float CKeybindManager::cursorZoomRelativeBase(PHLMONITOR pMonitor) {
+    if (m_cursorZoomSmoothing.active)
+        return m_cursorZoomSmoothing.target;
+
+    return pMonitor ? pMonitor->m_cursorZoom->value() : CURSOR_ZOOM_MIN;
+}
+
+void CKeybindManager::setCursorZoomSmoothTarget(float target, PHLMONITOR pMonitor) {
+    target = std::clamp(target, CURSOR_ZOOM_MIN, CURSOR_ZOOM_MAX);
+
+    if (!m_cursorZoomSmoothing.active) {
+        m_cursorZoomSmoothing.current  = pMonitor->m_cursorZoom->value();
+        m_cursorZoomSmoothing.velocity = 0.F;
+        m_cursorZoomFrameTimer.reset();
+    }
+
+    m_cursorZoomSmoothing.active = true;
+    m_cursorZoomSmoothing.target = target;
+
+    // Relative wheel zoom is rendered from this state; m_cursorZoom is committed only after settling.
+    g_pHyprRenderer->damageMonitor(pMonitor);
+}
+
+float CKeybindManager::cursorZoomForRender(PHLMONITOR pMonitor, float zoom) {
+    if (!m_cursorZoomSmoothing.active)
+        return zoom;
+
+    if (!pMonitor || g_pCompositor->m_monitors.empty()) {
+        resetCursorZoomSmoothing();
+        return zoom;
+    }
+
+    if (pMonitor != g_pCompositor->getMonitorFromCursor())
+        return zoom;
+
+    const float DT = std::clamp(m_cursorZoomFrameTimer.getMillis() / 1000.F, 0.001F, 0.050F);
+    m_cursorZoomFrameTimer.reset();
+
+    const float NEXT = smoothCursorZoomStep(m_cursorZoomSmoothing.current, m_cursorZoomSmoothing.target, m_cursorZoomSmoothing.velocity, DT);
+
+    m_cursorZoomSmoothing.current = NEXT;
+    g_pHyprRenderer->damageMonitor(pMonitor);
+
+    if (std::abs(m_cursorZoomSmoothing.target - m_cursorZoomSmoothing.current) > CURSOR_ZOOM_SETTLE_EPS ||
+        std::abs(m_cursorZoomSmoothing.velocity) > CURSOR_ZOOM_VELOCITY_EPS)
+        return m_cursorZoomSmoothing.current;
+
+    const float TARGET = m_cursorZoomSmoothing.target;
+    resetCursorZoomSmoothing();
+    for (auto const& m : g_pCompositor->m_monitors)
+        m->m_cursorZoom->setValueAndWarp(TARGET);
+
+    return TARGET;
 }
 
 uint32_t CKeybindManager::stringToModMask(std::string mods) {
@@ -519,25 +641,25 @@ bool CKeybindManager::onAxisEvent(const IPointer::SAxisEvent& e) {
 
     static auto PDELAY = CConfigValue<Hyprlang::INT>("binds:scroll_event_delay");
 
-    if (m_scrollTimer.getMillis() < *PDELAY)
-        return true; // timer hasn't passed yet!
+    std::string keyName;
+    if (e.source == WL_POINTER_AXIS_SOURCE_WHEEL && e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
+        keyName = e.delta < 0 ? "mouse_down" : "mouse_up";
+    else if (e.source == WL_POINTER_AXIS_SOURCE_WHEEL && e.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL)
+        keyName = e.delta < 0 ? "mouse_left" : "mouse_right";
 
-    m_scrollTimer.reset();
+    const bool BYPASSDELAY = shouldBypassScrollDelay(MODS, keyName);
+    if (!BYPASSDELAY) {
+        if (m_scrollTimer.getMillis() < *PDELAY)
+            return true; // timer hasn't passed yet!
+
+        m_scrollTimer.reset();
+    }
 
     m_activeKeybinds.clear();
 
     bool found = false;
-    if (e.source == WL_POINTER_AXIS_SOURCE_WHEEL && e.axis == WL_POINTER_AXIS_VERTICAL_SCROLL) {
-        if (e.delta < 0)
-            found = !handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_down"}, true, nullptr).passEvent;
-        else
-            found = !handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_up"}, true, nullptr).passEvent;
-    } else if (e.source == WL_POINTER_AXIS_SOURCE_WHEEL && e.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
-        if (e.delta < 0)
-            found = !handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_left"}, true, nullptr).passEvent;
-        else
-            found = !handleKeybinds(MODS, SPressedKeyWithMods{.keyName = "mouse_right"}, true, nullptr).passEvent;
-    }
+    if (!keyName.empty())
+        found = !handleKeybinds(MODS, SPressedKeyWithMods{.keyName = keyName}, true, nullptr).passEvent;
 
     if (found)
         shadowKeybinds();
@@ -1796,6 +1918,49 @@ SDispatchResult CKeybindManager::moveCursor(std::string args) {
 
     g_pCompositor->warpCursorTo({x, y}, true);
     g_pInputManager->simulateMouseMovement();
+
+    return {};
+}
+
+SDispatchResult CKeybindManager::cursorZoom(std::string args) {
+    const auto VALUE = trim(args);
+
+    if (VALUE.empty()) {
+        Log::logger->log(Log::ERR, "zoom, missing zoom factor.");
+        return {.success = false, .error = "zoom, missing zoom factor."};
+    }
+
+    size_t parseEnd = 0;
+    float  zoom     = 1.F;
+    try {
+        zoom = std::stof(VALUE, &parseEnd);
+    } catch (std::exception& e) {
+        Log::logger->log(Log::ERR, "zoom, invalid zoom factor.");
+        return {.success = false, .error = "zoom, invalid zoom factor."};
+    }
+
+    if (parseEnd != VALUE.size() || !std::isfinite(zoom)) {
+        Log::logger->log(Log::ERR, "zoom, invalid zoom factor.");
+        return {.success = false, .error = "zoom, invalid zoom factor."};
+    }
+
+    const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
+    if (!PMONITOR) {
+        Log::logger->log(Log::ERR, "zoom, no monitor under cursor.");
+        return {.success = false, .error = "zoom, no monitor under cursor."};
+    }
+
+    const bool  RELATIVE = VALUE.starts_with('+') || VALUE.starts_with('-');
+    const float TARGET   = std::clamp(RELATIVE ? g_pKeybindManager->cursorZoomRelativeBase(PMONITOR) + zoom : zoom, CURSOR_ZOOM_MIN, CURSOR_ZOOM_MAX);
+
+    if (RELATIVE)
+        g_pKeybindManager->setCursorZoomSmoothTarget(TARGET, PMONITOR);
+    else {
+        g_pKeybindManager->resetCursorZoomSmoothing();
+        for (auto const& m : g_pCompositor->m_monitors)
+            *m->m_cursorZoom = TARGET;
+        g_pCompositor->refreshSurfaceScalesForMonitor(PMONITOR, true);
+    }
 
     return {};
 }

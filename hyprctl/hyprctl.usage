@@ -137,6 +137,7 @@ hyprctl [<OPTIONS>]... <ARGUMENTS>
                 |  (toggleopaque)            	                      "Toggle the current window to always be opaque"
                 |  (movecursortocorner)          	                  "Move the cursor to the corner of the active window"
                 |  (movecursor)          	                          "Move the cursor to a specified position"
+                |  (zoom)                                            "Set or increment the cursor zoom factor"
                 |  (renameworkspace)         	                      "Rename a workspace"
                 |  (exit)            	                              "Exit the compositor with no questions asked"
                 |  (forcerendererreload)         	                  "Force the renderer to reload all resources and outputs"

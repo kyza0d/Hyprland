@@ -2,6 +2,7 @@
 
 #include "../../../../Compositor.hpp"
 #include "../../../../helpers/Monitor.hpp"
+#include "../../../../managers/KeybindManager.hpp"
 
 CCursorZoomTrackpadGesture::CCursorZoomTrackpadGesture(const std::string& first, const std::string& second) {
     try {
@@ -17,6 +18,8 @@ void CCursorZoomTrackpadGesture::begin(const ITrackpadGesture::STrackpadGestureB
 
     if (m_mode == MODE_TOGGLE)
         m_zoomed = !m_zoomed;
+
+    g_pKeybindManager->resetCursorZoomSmoothing();
 
     for (auto const& m : g_pCompositor->m_monitors) {
         switch (m_mode) {

@@ -122,8 +122,17 @@ class CKeybindManager {
     std::unordered_map<std::string, xkb_keycode_t> m_keyToCodeCache;
 
     static SDispatchResult                         changeMouseBindMode(const eMouseBindMode mode);
+    void                                           resetCursorZoomSmoothing();
+    float                                          cursorZoomForRender(PHLMONITOR, float);
 
   private:
+    struct SCursorZoomSmoothing {
+        bool  active   = false;
+        float current  = 1.F;
+        float target   = 1.F;
+        float velocity = 0.F;
+    };
+
     std::vector<SPressedKeyWithMods> m_pressedKeys;
 
     inline static SSubmap            m_currentSelectedSubmap = {};
@@ -144,8 +153,13 @@ class CKeybindManager {
     int                              m_passPressed = -1; // used for pass
 
     CTimer                           m_scrollTimer;
+    CTimer                           m_cursorZoomFrameTimer;
+    SCursorZoomSmoothing             m_cursorZoomSmoothing;
 
     SDispatchResult                  handleKeybinds(const uint32_t, const SPressedKeyWithMods&, bool, SP<IKeyboard>);
+    bool                             shouldBypassScrollDelay(const uint32_t, const std::string&);
+    float                            cursorZoomRelativeBase(PHLMONITOR);
+    void                             setCursorZoomSmoothTarget(float, PHLMONITOR);
 
     std::set<xkb_keysym_t>           m_mkKeys = {};
     std::set<xkb_keysym_t>           m_mkMods = {};
@@ -200,6 +214,7 @@ class CKeybindManager {
     static SDispatchResult swapSplit(std::string);
     static SDispatchResult moveCursorToCorner(std::string);
     static SDispatchResult moveCursor(std::string);
+    static SDispatchResult cursorZoom(std::string);
     static SDispatchResult workspaceOpt(std::string);
     static SDispatchResult renameWorkspace(std::string);
     static SDispatchResult exitHyprland(std::string);

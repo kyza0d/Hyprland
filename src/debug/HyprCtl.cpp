@@ -1319,6 +1319,7 @@ static std::string dispatchKeyword(eHyprCtlOutputFormat format, std::string in) 
     if (COMMAND.contains("decoration:") || COMMAND.contains("border") || COMMAND == "workspace" || COMMAND.contains("zoom_factor") || COMMAND == "debug:zoom_projection" ||
         COMMAND == "debug:zoom_surface_scale" || COMMAND == "debug:zoom_surface_scale_max" || COMMAND == "source") {
         static auto PZOOMFACTOR = CConfigValue<Hyprlang::FLOAT>("cursor:zoom_factor");
+        g_pKeybindManager->resetCursorZoomSmoothing();
         for (auto const& m : g_pCompositor->m_monitors) {
             *(m->m_cursorZoom) = *PZOOMFACTOR;
             g_pCompositor->refreshSurfaceScalesForMonitor(m, true);

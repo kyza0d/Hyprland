@@ -7,6 +7,7 @@
 #include "../config/ConfigValue.hpp"
 #include "../config/ConfigManager.hpp"
 #include "../managers/CursorManager.hpp"
+#include "../managers/KeybindManager.hpp"
 #include "../managers/PointerManager.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../managers/animation/AnimationManager.hpp"
@@ -1279,8 +1280,6 @@ void CHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
 
     static int                                            damageBlinkCleanup = 0; // because double-buffered
 
-    const float                                           ZOOMFACTOR = pMonitor->m_cursorZoom->value();
-
     if (pMonitor->m_pixelSize.x < 1 || pMonitor->m_pixelSize.y < 1) {
         Log::logger->log(Log::ERR, "Refusing to render a monitor because of an invalid pixel size: {}", pMonitor->m_pixelSize);
         return;
@@ -1299,6 +1298,8 @@ void CHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
 
     if (g_pAnimationManager)
         g_pAnimationManager->frameTick();
+
+    const float ZOOMFACTOR = g_pKeybindManager ? g_pKeybindManager->cursorZoomForRender(pMonitor, pMonitor->m_cursorZoom->value()) : pMonitor->m_cursorZoom->value();
 
     if (pMonitor->m_id == m_mostHzMonitor->m_id ||
         *PVFR == 1) { // unfortunately with VFR we don't have the guarantee mostHz is going to be updated all the time, so we have to ignore that

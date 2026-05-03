@@ -1360,6 +1360,7 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
     }
 
     static auto PZOOMFACTOR = CConfigValue<Hyprlang::FLOAT>("cursor:zoom_factor");
+    g_pKeybindManager->resetCursorZoomSmoothing();
     for (auto const& m : g_pCompositor->m_monitors) {
         *(m->m_cursorZoom) = *PZOOMFACTOR;
         g_pCompositor->refreshSurfaceScalesForMonitor(m, true);
